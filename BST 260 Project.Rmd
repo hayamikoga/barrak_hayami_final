@@ -1,0 +1,320 @@
+---
+title: 'BST 260 Project: Air Pollution in Kuwait'
+author: "Barrak Alahmad & Hayami Koga"
+date: "December 2019"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
+---
+Let's start by loading the libraries.
+
+```{r loadlib, echo=T, results='hide', message=F, warning=F}
+library(lubridate)
+library(tidyverse)
+library(ggpubr)
+library(ggthemes)
+library(ggmap)
+library(readxl)
+library(kableExtra)
+```
+
+## Overview and Motivation 
+
+Fine particles (PM2.5) can infiltrate into the deep tissues of the lungs and diffuse into the bloodstream. It is well documented in the literature that exposure to high concentrations of both PM10 and PM2.5 produce a very close quantitative relationship with mortality and morbidity, daily and chronically. Because of this, many countries and regions around the world made changes to their air quality standards aiming for lesser levels of PM. Regulating PM comes with significant reductions in health risks. For local governments, understanding the spatial and seasonal variations of air quality is critical to environmental health risk assessments
+
+In Kuwait, there are three key dynamics in which air quality is impacted; dust storms, seasons, and petrochemical activities. First, the aridity of the desert climate in Kuwait makes dust storms more frequent throughout the year. Second, Kuwait is and neighboring countries are very well known for the enormous oil and gas industry. And third, seasons can further complicate the overall picture of air quality in Kuwait. In order to understand the distribution of particulate matter in the country, we will need to characterize these three variables; dust, petrochemical activities, and seasons. 
+
+## Related Work 
+
+Previous studies in Kuwait have found that: 
+
+* **Dust**: Dust events have been linked to mortality and morbidity in Kuwait (Thalib and Al-Taiar 2012; Al-Hemoud et al. 2018; Achilleos et al. 2019). Dust in Kuwait is usually carried from regional distant sources outside the country (Alolayan et al. 2013). 
+
+* **Petrochemical Activities**: Nearly 30% of PM2.5 in Kuwait comes directly from oil combustion and petrochemical activities, posing a large public health burden (Alolayan et al. 2013; Al-Hemoud et al. 2018). 
+
+* **Seasons**: Very hot summer months in Kuwait are associated with a significant increase in the demand on oil-burning power plants, but at the same time, traffic volume is likely to become less than the rest of the year (Brown et al. 2008; Al-Hemoud et al. 2019). Hot and dry northwestern winds carrying sand dust occur from late spring through fall (Alolayan et al. 2013).  
+
+## Questions
+
+Despite the increasing number of studies on air quality in Kuwait, we identified some questions that could be key for decision makers. 
+
+1- What are the levels of PM2.5 and PM10 during dust and no-dust days?
+
+2- Are the concentrations of PM2.5 and PM10 in Kuwait City statistically different than in the South of Kuwait (near petrochemical activities)?
+
+3- How do the levels of PM2.5 and PM10 vary across seasons in Kuwait? 
+
+
+## Data
+
+In this project, we will merge three datasets. First, Harvard particle impactors were placed in two residential locations in Kuwait, one in Kuwait City near the downtown, and the other in a southern location near industrial activities. This Harvard-Kuwait sampling program collected daily samples from September 2017 to March 2019 for gravimetric analysis and X-Ray Fluorescence (XRF) speciation. Second, we had daily weather data (temperature, wind speed, relative humidity, etc) collected from Kuwait Airport and obtained from the Civil Aviation Authority in Kuwait. Third, is dataset that indicates which days had a dust storm obtained from the Department of Meteorology in Kuwait. 
+
+```{r}
+harvard <- read.csv("data_master.csv")
+weather <- read_xlsx("weather_Barrak.xlsx")
+dust <- read_xlsx("Ali_Dust_Class.xlsx")
+
+#class(harvard$startdate)
+#class(weather$Date)
+#class(dust$date)
+
+harvard <- harvard %>% mutate(date = mdy(startdate))
+weather <- weather %>% mutate(date = ymd(Date))
+dust <- dust %>% mutate(date = ymd(date))
+
+dat <- left_join(harvard, weather, by = "date")
+dat <- left_join(dat, dust, by = "date")
+
+head(dat)
+
+```
+
+To give some context to the location of stations, here is a `ggmap` figure of the Harvard-Kuwait sampling program locations. The Southern location is a residential location surrounded by oil and gas operations. The concentrations from the south will be used as a proxy for living near petrochemical activities. 
+
+```{r}
+register_google(key = "AIzaSyATOuH5EnPl0iPmHquU4PHZLF3BDsBzW30")
+kcoord <- c(47.4818, 29.3117)
+
+kmap3 <- get_googlemap(center = kcoord, zoom = 9,
+  maptype = "satellite",
+  region = "kw",
+  style = c(feature = "all", element = "labels", visibility = "off"),
+  color = "color"
+)
+
+ggmap(kmap3) + 
+  annotate('text', x = 46.8, y = 29.8, label = "Iraq", size = 4) + 
+  annotate('text', x = 47.25, y = 28.8, label = "Saudi Arabia", size = 4) + 
+  #annotate('text', x = 48.8, y = 30.5 , label = "Iran") + 
+  annotate('text', x = 47.5, y = 29.7, label = "Kuwait", size = 5) + 
+  annotate('point', x = 48.1548, y = 28.9570, color = "red") + 
+  annotate('text', x = 48.1, y = 28.93, color = "black", label = "Southern location", size = 3) + 
+  annotate('point', x = 47.9948, y = 29.3573, color = "red")+
+  annotate('text', x = 47.9948, y = 29.3873, color = "black", label = "Kuwait City", size = 3) + 
+  ggtitle("Locations of the Two Sampling Monitors")
+
+```
+
+Note that the in the dataset, the variable `station` have 4 categories: 
+
+* `c1pm25`: PM2.5 concentrations from Kuwait City monitor
+* `c1pm10`: PM10 concentrations from Kuwait City monitor
+* `c2pm25`: PM2.5 concentrations from Southern location monitor 
+* `c2pm10`: PM10 concentrations from Southern location monitor
+
+## Exploratory Data Analysis
+
+First, we create a variable for seasons. In Kuwait, according to the  Kuwait Meteorological Department, seasons are classified as follows:
+
+* Winter: 6 December - 15 February
+* Spring: 16 February - 20 May 
+* Summer: 21 May - 4 November 
+* Fall: 5 November - 5 December
+
+```{r}
+dat <- dat %>% 
+  mutate(season_kuwait = case_when(
+    date2 = between(date, as.Date("2017-05-21"),as.Date("2017-11-4")) ~ "Summer",
+    date2 = between(date, as.Date("2017-11-05"),as.Date("2017-12-05")) ~ "Fall",
+    date2 = between(date, as.Date("2017-12-06"),as.Date("2018-02-15")) ~ "Winter",
+    date2 = between(date, as.Date("2018-02-16"),as.Date("2018-05-20")) ~ "Spring",
+    date2 = between(date, as.Date("2018-05-21"),as.Date("2018-11-4")) ~ "Summer",
+    date2 = between(date, as.Date("2018-11-05"),as.Date("2018-12-05")) ~ "Fall",
+    date2 = between(date, as.Date("2018-12-06"),as.Date("2019-02-15")) ~ "Winter",
+    date2 = between(date, as.Date("2019-02-16"),as.Date("2019-05-20")) ~ "Spring"), 
+    dust = ifelse(haze_1 | blowing_2 | storm_3 == 1, 1, 0))
+
+```
+
+Now we create a long table 1, where we look at PM2.5 and PM10 levels (summarized by mean, median, standard deviation and interquartile range) stratified by location of station, presence of dust, and seasons.  
+
+```{r}
+table1 <- dat %>% 
+  group_by(station, season_kuwait, dust) %>% 
+  dplyr::summarize(
+    N = n(),
+    Mean  = round(mean(pm, na.rm = TRUE)), 
+    SD = round(sd(pm, na.rm = TRUE)),
+    Median = round(median(pm, na.rm = TRUE)),
+    IQR = round(IQR(pm, na.rm = TRUE)), 
+  )
+
+table1 %>% kable() %>% 
+  kable_styling(c("striped",  "condensed"), full_width = F) %>% 
+  footnote(general = "Unit = ug/m3")
+
+```
+
+Now let's look at the overall time trends of PM2.5 and PM10 between the two stations. 
+
+```{r}
+trend <- dat %>% 
+  mutate(station1 = factor(station, levels=c("c1pm10", "c1pm25", "c2pm10", "c2pm25"),
+                           labels = c("PM10 Kuwait City", "PM2.5 Kuwait City",
+                                  "PM10 Southern Location", "PM2.5 Southern Location"))) %>%
+  ggplot(aes(date,pm)) +
+  geom_step(color = "dark blue") +
+  xlab("Time") + 
+  ylab("PM mass (in ug/m3)") +
+  ggtitle("Time trends of PM2.5 and PM10 in Kuwait") +
+  facet_wrap(~station1) +
+  theme_pubclean()
+
+trend
+```
+
+We can also look if dust days had higher PM concentrations compared to non-dust days. 
+
+```{r}
+trend_dust <- dat %>% 
+  mutate(station1 = factor(station, levels=c("c1pm10", "c1pm25", "c2pm10", "c2pm25"),
+                           labels = c("PM10 Kuwait City", "PM2.5 Kuwait City",
+                                  "PM10 Southern Location", "PM2.5 Southern Location"))) %>%
+  ggplot(aes(date,pm)) +
+  geom_point(aes(color=as.factor(dust))) +
+  xlab("Time") + 
+  ylab("PM mass (in ug/m3)") +
+  ggtitle("Time trends of PM2.5 and PM10 in Kuwait") +
+  scale_color_discrete(name = "Legend", labels = c("no dust days", "dust days"))+
+  facet_wrap(~station1) +
+  theme_pubclean()
+
+trend_dust
+```
+
+Apart from some outliers, it is hard to tease out the trends from these time-series graphs. Another way to visualize the seasonality of the data is by creating boxplots for each season. 
+
+To understand the levels of air pollutants, three reference values were used: 
+
+* **KEPA** : Kuwait Enviornmental Public Authority standards. 
+* **NAAQS** : National Ambient Air Quality Standards (US EPA). 
+* **WHO** : World Health Organization standards. 
+
+```{r}
+dat %>% 
+  mutate(station1 = factor(station, levels=c("c1pm10", "c1pm25", "c2pm10", "c2pm25"),
+                           labels = c("PM10 Kuwait City", "PM2.5 Kuwait City",
+                                  "PM10 Southern Location", "PM2.5 Southern Location"))) %>%
+  filter(station == "c1pm25" | station == "c2pm25") %>% 
+  ggplot(aes(x=season_kuwait, y=pm)) +
+  geom_boxplot(aes(fill=as.factor(dust)), position=position_dodge(0.5)) +
+  scale_y_continuous(limit = c(0,130), breaks = c(0, 25, 35, 50, 75, 100)) +
+  scale_fill_discrete(name = "Legend", labels = c("no dust days", "dust days")) +
+  labs(x="Season") + labs(y="Particulate mass (in ug/m3)") + 
+  labs(title = "PM2.5 Levels in Kuwait by Locations, Dust Days, and Seasons") +
+  geom_hline(yintercept=75, linetype="dashed", color = "black") +
+  geom_hline(yintercept=35, linetype="dashed", color = "black") +
+  geom_hline(yintercept=25, linetype="dashed", color = "black") + 
+  annotate("text", label = "WHO", x= 4.4, y= 28, size = 2, color = "dark red") +
+  annotate("text", label = "NAAQS", x= 4.4, y= 38, size = 2, color = "dark red") + 
+  annotate("text", label = "KEPA", x= 4.4, y= 78, size = 2, color = "dark red")+
+  facet_wrap(~station1)+
+  theme_pubr()
+
+
+dat %>% 
+  mutate(station1 = factor(station, levels=c("c1pm10", "c1pm25", "c2pm10", "c2pm25"),
+                           labels = c("PM10 Kuwait City", "PM2.5 Kuwait City",
+                                  "PM10 Southern Location", "PM2.5 Southern Location"))) %>%
+  filter(station == "c1pm10" | station == "c2pm10") %>% 
+  ggplot(aes(x=season_kuwait, y=pm)) +
+  geom_boxplot(aes(fill=as.factor(dust)), position=position_dodge(0.5)) +
+  scale_y_continuous(limit = c(0,500), breaks = c(0, 50, 150, 350, 500)) +
+  scale_fill_discrete(name = "Legend", labels = c("no dust days", "dust days")) +
+  labs(x="Season") + labs(y="Particulate mass (in ug/m3)") + 
+  labs(title = "PM10 Levels in Kuwait by Locations, Dust Days, and Seasons") +
+  geom_hline(yintercept=350, linetype="dashed", color = "black") +
+  geom_hline(yintercept=150, linetype="dashed", color = "black") +
+  geom_hline(yintercept=50, linetype="dashed", color = "black") + 
+  annotate("text", label = "WHO", x= 4.4, y= 60, size = 2, color = "dark red") +
+  annotate("text", label = "NAAQS", x= 4.4, y= 160, size = 2, color = "dark red") + 
+  annotate("text", label = "KEPA", x= 4.4, y= 360, size = 2, color = "dark red")+
+  facet_wrap(~station1)+
+  theme_pubr()
+
+```
+
+
+## Final Analysis
+
+Let's now analytically try to answer the questions of interest. To investigate the differences between PM levels in the two locations, we used **linear regression** with location (Kuwait City vs. Southern Location) as the independent variable and PM as the dependent variable.  We reported the coefficient from the resulting regression analysis which is equivalent to two-sample t-test. Similarly, we ran a similar simple linear regression model but with dust indicator variable (0: no dust, 1: dust present). Finally, we used analysis of variance (one way ANOVA) to compare the differences from multiple seasons and adjusted the p-values for multiple testing. 
+
+Alpha was set at 0.05 and all analyses were conducted using R (version 1.2.1). 
+
+**1- What are the levels of PM2.5 and PM10 during dust and no-dust days?**
+
+During no dust days, the average PM2.5 and PM10 in Kuwait are 40 and 109 ug/m3, respectively. The effects of dust events significantly increase the concentrations of PM2.5 and PM10 by 26 (95% CI: 20-33, p<0.001) and 82 (95% CI: 68-95, p<0.001) ug/m3, respectively. Similarly, when we compare the medians between dust and no dust days, we still find a very significant differences (p<0.001).
+
+
+```{r}
+pm25 <- dat %>% filter(station == "c1pm25" | station == "c2pm25")
+pm10 <- dat %>% filter(station == "c1pm10" | station == "c2pm10")
+
+model1 <- lm(pm~as.factor(dust), data = pm25)
+model2 <- lm(pm~as.factor(dust), data = pm10)
+
+summary(model1)
+confint(model1)
+summary(model2)
+confint(model2)
+
+wilcox.test(pm25$pm[pm25$dust==1], pm25$pm[pm25$dust==0])
+
+```
+
+
+**2- Are the concentrations of PM2.5 and PM10 in Kuwait City statistically different than in the South of Kuwait (near petrochemical activities)?**
+
+In terms of PM2.5, there was no statistical difference between Kuwait City and the Southern location levels (p=0.56). However, PM10 in the Southern location was 16 ug/m3 (95% CI: 3-30, p=0.02) higher than the Kuwait City location. 
+
+```{r}
+model3 <- lm(pm~as.factor(station), data = pm25)
+model4 <- lm(pm~as.factor(station), data = pm10)
+
+summary(model3)
+confint(model3)
+summary(model4)
+confint(model4)
+```
+
+**3- How do the levels of PM2.5 and PM10 vary across seasons in Kuwait?**
+
+We used ANOVA to compare the levels at different seasons and adjusted the p-values for multiple testing.For both PM2.5 and PM10, the fall season had the lowest concentrations while the summer had the highest. Summer, winter and spring were all significantly higher than fall. However, there were no detected statistical differences when comparing between summer, spring and winter. 
+
+```{r}
+model7 <- aov(pm~as.factor(season_kuwait), data = pm25)
+summary(model7)  #global p-value (null = all groups are same)
+TukeyHSD(model7) #pairwise comparison with adjustment for multiple testing
+
+model8 <- aov(pm~as.factor(season_kuwait), data = pm10)
+summary(model8)  #global p-value (null = all groups are same)
+TukeyHSD(model8) #pairwise comparison with adjustment for multiple testing
+
+```
+
+## Conclusions 
+
+**1- Dust is a significant contributor to PM2.5 and PM10 levels in Kuwait. During dust days air quality deteriorates significantly.**
+
+**2- Combustion from petrochemical acitivities near oil and gas facilities do not seem to disproportionately change the spatial distribution of PM2.5 in Kuwait.**
+
+**3- Summer is the longest season in Kuwait and is associated with the highest PM2.5 and PM10 concentrations across the whole year.**
+
+## References
+
+Achilleos, S., Al-Ozairi, E., Alahmad, B., Garshick, E., Neophytou, A.M., Bouhamra, W., Yassin, M.F. and Koutrakis, P., 2019. Acute effects of air pollution on mortality: A 17-year analysis in Kuwait. Environment international, 126, pp.476-483.
+
+Al-Hemoud, A., Al-Dousari, A., Al-Shatti, A., Al-Khayat, A., Behbehani, W., & Malak, M. (2018a). Health impact assessment associated with exposure to PM10 and dust storms in Kuwait. Atmosphere, 9(1), 6.
+
+Al-Hemoud, A., Gasana, J., Al-Dabbous, A., Al-Shatti, A. and Al-Khayat, A., 2018b. Disability Adjusted Life Years (DALYs) in Terms of Years of Life Lost (YLL) Due to Premature Adult Mortalities and Postneonatal Infant Mortalities Attributed to PM2. 5 and PM10 Exposures in Kuwait. International journal of environmental research and public health, 15(11), p.2609.
+
+Al-Hemoud, A., Gasana, J., Al-Dabbous, A., Alajeel, A., Al-Shatti, A., Behbehani, W., & Malak, M. (2019). Exposure levels of air pollution (PM2. 5) and associated health risk in Kuwait. Environmental research, 108730.
+
+Alolayan, M.A., Brown, K.W., Evans, J.S., Bouhamra, W.S. and Koutrakis, P., 2013. Source apportionment of fine particles in Kuwait City. Science of the total environment, 448, pp.14-25.
+
+Brown, K.W., Bouhamra, W., Lamoureux, D.P., Evans, J.S. and Koutrakis, P., 2008. Characterization of particulate matter for three sites in Kuwait. Journal of the Air & Waste Management Association, 58(8), pp.994-1003.
+
+Thalib, L., Al-Taiar, A., 2012. Dust storms and the risk of asthma admissions to hospitals in Kuwait. Science of the Total Environment, 433, 347-351.
